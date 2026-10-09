@@ -138,6 +138,10 @@ export default function PerfilAdmin() {
   const [codigoAsesor, setCodigoAsesor] = useState("");
   const [telefonoAsesor, setTelefonoAsesor] = useState("");
   const [rangoAsesor, setRangoAsesor] = useState("");
+  const [errorCrearAdmin, setErrorCrearAdmin] = useState("");
+  const [errorCrearAsesor, setErrorCrearAsesor] = useState("");
+  const [creandoAdmin, setCreandoAdmin] = useState(false);
+  const [creandoAsesor, setCreandoAsesor] = useState(false);
 
   const admin = admins.find((a) => a.id === sesion?.id);
   const autorizado = !!sesion && sesion.rol === "admin" && !!admin;
@@ -400,7 +404,7 @@ export default function PerfilAdmin() {
     setFechaComunicado("");
   }
 
-  function registrarAdmin() {
+  async function registrarAdmin() {
     if (
       !nombresAdmin.trim() ||
       !codigoAdmin.trim() ||
@@ -409,18 +413,28 @@ export default function PerfilAdmin() {
       codigoAdminDuplicado
     )
       return;
-    agregarAdmin({
-      nombres: nombresAdmin,
-      codigo: codigoAdmin,
-      clave: claveAdmin,
-      franquicia: admin.franquicia,
-    });
-    setNombresAdmin("");
-    setCodigoAdmin("");
-    setClaveAdmin("");
+    setErrorCrearAdmin("");
+    setCreandoAdmin(true);
+    try {
+      const resultado = await agregarAdmin({
+        nombres: nombresAdmin,
+        codigo: codigoAdmin,
+        clave: claveAdmin,
+        franquicia: admin.franquicia,
+      });
+      if (!resultado.ok) {
+        setErrorCrearAdmin(resultado.error);
+        return;
+      }
+      setNombresAdmin("");
+      setCodigoAdmin("");
+      setClaveAdmin("");
+    } finally {
+      setCreandoAdmin(false);
+    }
   }
 
-  function registrarAsesor() {
+  async function registrarAsesor() {
     if (
       !nombresAsesor.trim() ||
       !codigoAsesor.trim() ||
@@ -429,19 +443,29 @@ export default function PerfilAdmin() {
       codigoAsesorDuplicado
     )
       return;
-    agregarAsesor({
-      nombres: nombresAsesor,
-      codigo: codigoAsesor,
-      clave: claveAsesor,
-      telefono: telefonoAsesor,
-      rango: rangoAsesor || "Embajador Bronce",
-      franquicia: admin.franquicia,
-    });
-    setNombresAsesor("");
-    setCodigoAsesor("");
-    setClaveAsesor("");
-    setTelefonoAsesor("");
-    setRangoAsesor("");
+    setErrorCrearAsesor("");
+    setCreandoAsesor(true);
+    try {
+      const resultado = await agregarAsesor({
+        nombres: nombresAsesor,
+        codigo: codigoAsesor,
+        clave: claveAsesor,
+        telefono: telefonoAsesor,
+        rango: rangoAsesor || "Embajador Bronce",
+        franquicia: admin.franquicia,
+      });
+      if (!resultado.ok) {
+        setErrorCrearAsesor(resultado.error);
+        return;
+      }
+      setNombresAsesor("");
+      setCodigoAsesor("");
+      setClaveAsesor("");
+      setTelefonoAsesor("");
+      setRangoAsesor("");
+    } finally {
+      setCreandoAsesor(false);
+    }
   }
 
   return (
@@ -1387,17 +1411,21 @@ export default function PerfilAdmin() {
                     ⚠ Ese codigo ya esta en uso por otro administrador
                   </p>
                 )}
+                {errorCrearAdmin && (
+                  <p className="text-xs text-red-600 -mt-1 mb-2">⚠ {errorCrearAdmin}</p>
+                )}
                 <button
                   onClick={registrarAdmin}
                   disabled={
                     !nombresAdmin.trim() ||
                     !codigoAdmin.trim() ||
                     !claveAdmin.trim() ||
-                    codigoAdminDuplicado
+                    codigoAdminDuplicado ||
+                    creandoAdmin
                   }
                   className="w-full bg-green-600 text-white rounded py-2 text-sm disabled:opacity-30"
                 >
-                  Crear administrador
+                  {creandoAdmin ? "Creando..." : "Crear administrador"}
                 </button>
               </section>
             )}
@@ -1412,7 +1440,6 @@ export default function PerfilAdmin() {
                         <tr className="text-left text-xs text-neutral-500 border-b border-neutral-200">
                           <th className="px-4 py-2 font-medium">Nombres</th>
                           <th className="px-4 py-2 font-medium">Usuario</th>
-                          <th className="px-4 py-2 font-medium">Contrasena</th>
                           <th className="px-4 py-2 font-medium">Rango</th>
                           <th className="px-4 py-2 font-medium text-right">Facturado (USD)</th>
                           <th className="px-4 py-2 font-medium">Estado</th>
@@ -1433,7 +1460,6 @@ export default function PerfilAdmin() {
                             >
                               <td className="px-4 py-2">{a.nombres}</td>
                               <td className="px-4 py-2 text-neutral-600">{a.codigo}</td>
-                              <td className="px-4 py-2 text-neutral-600 font-mono">{a.clave}</td>
                               <td className="px-4 py-2 text-neutral-600">{a.rango}</td>
                               <td className="px-4 py-2 text-right">
                                 USD {facturado.toLocaleString()}
@@ -1462,7 +1488,7 @@ export default function PerfilAdmin() {
                         })}
                         {asesoresFranquicia.length === 0 && (
                           <tr>
-                            <td colSpan={7} className="px-4 py-4 text-center text-neutral-400">
+                            <td colSpan={6} className="px-4 py-4 text-center text-neutral-400">
                               Sin asesores creados
                             </td>
                           </tr>
@@ -1515,17 +1541,21 @@ export default function PerfilAdmin() {
                       ⚠ Ese codigo ya esta en uso por otro asesor o administrador
                     </p>
                   )}
+                  {errorCrearAsesor && (
+                    <p className="text-xs text-red-600 -mt-1 mb-2">⚠ {errorCrearAsesor}</p>
+                  )}
                   <button
                     onClick={registrarAsesor}
                     disabled={
                       !nombresAsesor.trim() ||
                       !codigoAsesor.trim() ||
                       !claveAsesor.trim() ||
-                      codigoAsesorDuplicado
+                      codigoAsesorDuplicado ||
+                      creandoAsesor
                     }
                     className="w-full bg-green-600 text-white rounded py-2 text-sm disabled:opacity-30"
                   >
-                    Crear asesor
+                    {creandoAsesor ? "Creando..." : "Crear asesor"}
                   </button>
                 </section>
               </>

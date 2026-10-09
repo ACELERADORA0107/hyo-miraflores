@@ -16,3 +16,13 @@ export const firebaseHabilitado = Boolean(firebaseConfig.apiKey && firebaseConfi
 export const app = firebaseHabilitado ? initializeApp(firebaseConfig) : null;
 export const auth = app ? getAuth(app) : null;
 export const db = app ? getFirestore(app) : null;
+
+/**
+ * Instancia secundaria, solo para crear usuarios nuevos (crearUserWithEmailAndPassword
+ * inicia sesion automaticamente como el usuario recien creado en la instancia donde se llama).
+ * Usando una app separada, el Admin que esta creando un Asesor nuevo no pierde su propia sesion.
+ */
+export const appSecundaria = firebaseHabilitado
+  ? initializeApp(firebaseConfig, "secundaria")
+  : null;
+export const authSecundaria = appSecundaria ? getAuth(appSecundaria) : null;

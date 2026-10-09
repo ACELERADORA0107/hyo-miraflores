@@ -1,7 +1,13 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAppStore } from "@/store/useAppStore";
 import type { Rol } from "@/types";
+
+const RUTA_POR_ROL: Record<Rol, string> = {
+  cliente: "/cliente",
+  asesor: "/asesor",
+  admin: "/admin",
+};
 
 // Perfil de cliente oculto temporalmente hasta nuevo aviso.
 const PERFIL_CLIENTE_HABILITADO = false;
@@ -20,22 +26,35 @@ export default function Login() {
   const [codigo, setCodigo] = useState("");
   const [clave, setClave] = useState("");
   const [error, setError] = useState("");
+  const [cargando, setCargando] = useState(false);
   const navigate = useNavigate();
-  const { loginCliente, loginAsesor, loginAdmin, clientes } = useAppStore();
+  const { loginCliente, loginAsesor, loginAdmin, clientes, sesion } = useAppStore();
 
-  function handleSubmit(e: React.FormEvent) {
+  useEffect(() => {
+    if (sesion) navigate(RUTA_POR_ROL[sesion.rol]);
+  }, [sesion, navigate]);
+
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
 
     if (tab === "cliente") {
       if (loginCliente(codigo.trim())) return navigate("/cliente");
       setError("DNI de cliente no encontrado.");
-    } else if (tab === "asesor") {
-      if (loginAsesor(codigo.trim(), clave.trim())) return navigate("/asesor");
-      setError("Codigo o clave incorrectos.");
-    } else {
-      if (loginAdmin(codigo.trim(), clave.trim())) return navigate("/admin");
-      setError("Codigo o clave incorrectos.");
+      return;
+    }
+
+    setCargando(true);
+    try {
+      if (tab === "asesor") {
+        if (await loginAsesor(codigo.trim(), clave.trim())) return navigate("/asesor");
+        setError("Codigo o clave incorrectos.");
+      } else {
+        if (await loginAdmin(codigo.trim(), clave.trim())) return navigate("/admin");
+        setError("Codigo o clave incorrectos.");
+      }
+    } finally {
+      setCargando(false);
     }
   }
 
@@ -96,9 +115,10 @@ export default function Login() {
 
           <button
             type="submit"
-            className="w-full bg-neutral-900 text-white rounded py-2 text-sm font-medium"
+            disabled={cargando}
+            className="w-full bg-neutral-900 text-white rounded py-2 text-sm font-medium disabled:opacity-50"
           >
-            Entrar
+            {cargando ? "Entrando..." : "Entrar"}
           </button>
         </form>
 
@@ -152,9 +172,8 @@ export default function Login() {
               )}
               <button
                 type="button"
-                onClick={() => {
-                  loginAsesor("ASE-001", "asesor123");
-                  navigate("/asesor");
+                onClick={async () => {
+                  if (await loginAsesor("ASE-001", "asesor123")) navigate("/asesor");
                 }}
                 className="text-xs border border-neutral-300 rounded py-2 hover:bg-neutral-50"
               >
@@ -162,9 +181,8 @@ export default function Login() {
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  loginAdmin("72208970", "1cic2i");
-                  navigate("/admin");
+                onClick={async () => {
+                  if (await loginAdmin("cesarqui", "aceleradora0107")) navigate("/admin");
                 }}
                 className="text-xs border border-neutral-300 rounded py-2 hover:bg-neutral-50"
               >

@@ -29,6 +29,25 @@ import type {
   TipoMovimientoComision,
 } from "@/types";
 import { generarCuotasIguales, lineaCuotasTexto } from "@/lib/cuotas";
+import { firebaseHabilitado } from "@/lib/firebase";
+import { COLECCIONES } from "@/lib/firestoreSchema";
+import {
+  guardarDocumento,
+  obtenerDocumento,
+  actualizarDocumento,
+  eliminarDocumento,
+} from "@/lib/firestoreSync";
+import {
+  crearCuentaConCodigo,
+  iniciarSesionConCodigo,
+  cerrarSesionAuth,
+} from "@/lib/firebaseAuth";
+
+type PerfilAdminFirestore = Pick<Admin, "codigo" | "nombres" | "franquicia">;
+type PerfilAsesorFirestore = Pick<
+  Asesor,
+  "codigo" | "nombres" | "telefono" | "franquicia" | "rango" | "usuarioPlataformaEducativa"
+>;
 
 interface Sesion {
   rol: Rol;
@@ -48,14 +67,15 @@ interface AppState {
   sesion: Sesion | null;
 
   loginCliente: (dni: string) => boolean;
-  loginAsesor: (codigo: string, clave: string) => boolean;
-  loginAdmin: (codigo: string, clave: string) => boolean;
+  loginAsesor: (codigo: string, clave: string) => Promise<boolean>;
+  loginAdmin: (codigo: string, clave: string) => Promise<boolean>;
+  restaurarSesionDesdeUid: (uid: string) => Promise<void>;
   agregarAdmin: (data: {
     nombres: string;
     codigo: string;
     clave: string;
     franquicia: string;
-  }) => void;
+  }) => Promise<{ ok: true } | { ok: false; error: string }>;
   eliminarAdmin: (adminId: string) => void;
   agregarAsesor: (data: {
     nombres: string;
@@ -64,7 +84,7 @@ interface AppState {
     telefono: string;
     rango: string;
     franquicia: string;
-  }) => void;
+  }) => Promise<{ ok: true } | { ok: false; error: string }>;
   eliminarAsesor: (asesorId: string) => void;
   actualizarActivoAsesor: (asesorId: string, activo: boolean) => void;
   logout: () => void;
@@ -602,10 +622,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   admins: [
     {
       id: "adm1",
-      codigo: "72208970",
-      clave: "1cic2i",
+      codigo: "cesarqui",
+      clave: "aceleradora0107",
       nombres: "Admin Principal",
-      franquicia: "Franquicia FK Embajadora Ana",
+      franquicia: "Franquicia Miraflores",
     },
   ],
   gestiones: [],
@@ -702,67 +722,225 @@ export const useAppStore = create<AppState>((set, get) => ({
     return true;
   },
 
-  loginAsesor: (codigo, clave) => {
-    const asesor = get().asesores.find((a) => a.codigo === codigo && a.clave === clave);
-    if (!asesor || !asesor.activo) return false;
-    set({ sesion: { rol: "asesor", id: asesor.id } });
+  loginAsesor: async (codigo, clave) => {
+    if (!firebaseHabilitado) {
+      const asesor = get().asesores.find((a) => a.codigo === codigo && a.clave === clave);
+      if (!asesor || !asesor.activo) return false;
+      set({ sesion: { rol: "asesor", id: asesor.id } });
+      return true;
+    }
+
+    let uid = await iniciarSesionConCodigo(codigo, clave);
+
+    // Primera vez: la cuenta todavia esta solo en los datos semilla locales, migrarla a Firebase.
+    if (!uid) {
+      const semilla = get().asesores.find((a) => a.codigo === codigo && a.clave === clave);
+      if (semilla && semilla.activo) {
+        const nuevoUid = await crearCuentaConCodigo(codigo, clave);
+        if (nuevoUid) {
+          // Iniciar sesion ANTES de escribir: las reglas de Firestore exigen estar
+          // autenticado, y la cuenta se creo en la instancia secundaria (sesion aparte).
+          uid = await iniciarSesionConCodigo(codigo, clave);
+          if (uid) {
+            const { id: _id, clave: _clave, ...perfilCompleto } = semilla;
+            await guardarDocumento(COLECCIONES.asesores, uid, perfilCompleto);
+          }
+        }
+      }
+    }
+    if (!uid) return false;
+
+    const perfil = await obtenerDocumento<Asesor>(COLECCIONES.asesores, uid);
+    if (!perfil) return false;
+    const asesorCompleto: Asesor = {
+      ...perfil,
+      id: uid,
+      clave: "",
+      bonosMeta: perfil.bonosMeta ?? [],
+      clienteIds: perfil.clienteIds ?? [],
+      activo: perfil.activo ?? true,
+    };
+    if (!asesorCompleto.activo) return false;
+    set((state) => ({
+      asesores: [...state.asesores.filter((a) => a.codigo !== codigo), asesorCompleto],
+      sesion: { rol: "asesor", id: uid },
+    }));
     return true;
   },
 
-  loginAdmin: (codigo, clave) => {
-    const admin = get().admins.find((a) => a.codigo === codigo && a.clave === clave);
-    if (!admin) return false;
-    set({ sesion: { rol: "admin", id: admin.id } });
+  loginAdmin: async (codigo, clave) => {
+    if (!firebaseHabilitado) {
+      const admin = get().admins.find((a) => a.codigo === codigo && a.clave === clave);
+      if (!admin) return false;
+      set({ sesion: { rol: "admin", id: admin.id } });
+      return true;
+    }
+
+    let uid = await iniciarSesionConCodigo(codigo, clave);
+
+    if (!uid) {
+      const semilla = get().admins.find((a) => a.codigo === codigo && a.clave === clave);
+      if (semilla) {
+        const nuevoUid = await crearCuentaConCodigo(codigo, clave);
+        if (nuevoUid) {
+          uid = await iniciarSesionConCodigo(codigo, clave);
+          if (uid) {
+            const perfil: PerfilAdminFirestore = {
+              codigo: semilla.codigo,
+              nombres: semilla.nombres,
+              franquicia: semilla.franquicia,
+            };
+            await guardarDocumento(COLECCIONES.admins, uid, perfil);
+          }
+        }
+      }
+    }
+    if (!uid) return false;
+
+    const perfil = await obtenerDocumento<Admin>(COLECCIONES.admins, uid);
+    if (!perfil) return false;
+    const adminCompleto: Admin = { ...perfil, id: uid, clave: "" };
+    set((state) => ({
+      admins: [...state.admins.filter((a) => a.codigo !== codigo), adminCompleto],
+      sesion: { rol: "admin", id: uid },
+    }));
     return true;
   },
 
-  agregarAdmin: (data) => {
-    const admin: Admin = {
-      id: crypto.randomUUID(),
+  restaurarSesionDesdeUid: async (uid) => {
+    const [perfilAdmin, perfilAsesor] = await Promise.all([
+      obtenerDocumento<Admin>(COLECCIONES.admins, uid),
+      obtenerDocumento<Asesor>(COLECCIONES.asesores, uid),
+    ]);
+    if (perfilAdmin) {
+      const adminCompleto: Admin = { ...perfilAdmin, id: uid, clave: "" };
+      set((state) => ({
+        admins: [...state.admins.filter((a) => a.id !== uid), adminCompleto],
+        sesion: { rol: "admin", id: uid },
+      }));
+    } else if (perfilAsesor) {
+      const asesorCompleto: Asesor = {
+        ...perfilAsesor,
+        id: uid,
+        clave: "",
+        bonosMeta: perfilAsesor.bonosMeta ?? [],
+        clienteIds: perfilAsesor.clienteIds ?? [],
+        activo: perfilAsesor.activo ?? true,
+      };
+      if (!asesorCompleto.activo) return;
+      set((state) => ({
+        asesores: [...state.asesores.filter((a) => a.id !== uid), asesorCompleto],
+        sesion: { rol: "asesor", id: uid },
+      }));
+    }
+  },
+
+  agregarAdmin: async (data) => {
+    if (!firebaseHabilitado) {
+      const admin: Admin = {
+        id: crypto.randomUUID(),
+        codigo: data.codigo,
+        clave: data.clave,
+        nombres: data.nombres,
+        franquicia: data.franquicia,
+      };
+      set((state) => ({ admins: [...state.admins, admin] }));
+      return { ok: true };
+    }
+
+    const uid = await crearCuentaConCodigo(data.codigo, data.clave);
+    if (!uid) {
+      return { ok: false, error: "No se pudo crear la cuenta (codigo en uso o clave muy corta)" };
+    }
+    const perfil: PerfilAdminFirestore = {
       codigo: data.codigo,
-      clave: data.clave,
       nombres: data.nombres,
       franquicia: data.franquicia,
     };
+    await guardarDocumento(COLECCIONES.admins, uid, perfil);
+    const admin: Admin = { id: uid, clave: "", ...perfil };
     set((state) => ({ admins: [...state.admins, admin] }));
+    return { ok: true };
   },
 
   eliminarAdmin: (adminId) => {
     set((state) => ({ admins: state.admins.filter((a) => a.id !== adminId) }));
+    if (firebaseHabilitado) {
+      void eliminarDocumento(COLECCIONES.admins, adminId).catch(() => {});
+    }
   },
 
-  agregarAsesor: (data) => {
-    const asesor: Asesor = {
-      id: crypto.randomUUID(),
+  agregarAsesor: async (data) => {
+    if (!firebaseHabilitado) {
+      const asesor: Asesor = {
+        id: crypto.randomUUID(),
+        codigo: data.codigo,
+        clave: data.clave,
+        nombres: data.nombres,
+        telefono: data.telefono,
+        franquicia: data.franquicia,
+        rango: data.rango,
+        usuarioPlataformaEducativa: data.codigo,
+        bonosMeta: [],
+        clienteIds: [],
+        activo: true,
+      };
+      set((state) => ({ asesores: [...state.asesores, asesor] }));
+      return { ok: true };
+    }
+
+    const uid = await crearCuentaConCodigo(data.codigo, data.clave);
+    if (!uid) {
+      return { ok: false, error: "No se pudo crear la cuenta (codigo en uso o clave muy corta)" };
+    }
+    const perfil: PerfilAsesorFirestore = {
       codigo: data.codigo,
-      clave: data.clave,
       nombres: data.nombres,
       telefono: data.telefono,
       franquicia: data.franquicia,
       rango: data.rango,
       usuarioPlataformaEducativa: data.codigo,
+    };
+    await guardarDocumento(COLECCIONES.asesores, uid, {
+      ...perfil,
+      bonosMeta: [],
+      clienteIds: [],
+      activo: true,
+    });
+    const asesor: Asesor = {
+      id: uid,
+      clave: "",
+      ...perfil,
       bonosMeta: [],
       clienteIds: [],
       activo: true,
     };
     set((state) => ({ asesores: [...state.asesores, asesor] }));
+    return { ok: true };
   },
 
   eliminarAsesor: (asesorId) => {
-    set((state) => {
-      const asesor = state.asesores.find((a) => a.id === asesorId);
-      if (!asesor || asesor.clienteIds.length > 0) return state;
-      return { asesores: state.asesores.filter((a) => a.id !== asesorId) };
-    });
+    const asesor = get().asesores.find((a) => a.id === asesorId);
+    if (!asesor || asesor.clienteIds.length > 0) return;
+    set((state) => ({ asesores: state.asesores.filter((a) => a.id !== asesorId) }));
+    if (firebaseHabilitado) {
+      void eliminarDocumento(COLECCIONES.asesores, asesorId).catch(() => {});
+    }
   },
 
   actualizarActivoAsesor: (asesorId, activo) => {
     set((state) => ({
       asesores: state.asesores.map((a) => (a.id !== asesorId ? a : { ...a, activo })),
     }));
+    if (firebaseHabilitado) {
+      void actualizarDocumento(COLECCIONES.asesores, asesorId, { activo }).catch(() => {});
+    }
   },
 
-  logout: () => set({ sesion: null }),
+  logout: () => {
+    if (firebaseHabilitado) void cerrarSesionAuth();
+    set({ sesion: null });
+  },
 
   crearClienteNuevo: (data) => {
     const codigo = siguienteCodigoCliente();
