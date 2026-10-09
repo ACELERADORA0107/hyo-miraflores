@@ -623,7 +623,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     {
       id: "adm1",
       codigo: "cesarqui",
-      clave: "aceleradora0107",
+      clave: "prueba1234",
       nombres: "Admin Principal",
       franquicia: "Franquicia Miraflores",
     },

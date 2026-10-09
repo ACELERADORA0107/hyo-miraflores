@@ -182,7 +182,7 @@ export default function Login() {
               <button
                 type="button"
                 onClick={async () => {
-                  if (await loginAdmin("cesarqui", "aceleradora0107")) navigate("/admin");
+                  if (await loginAdmin("cesarqui", "prueba1234")) navigate("/admin");
                 }}
                 className="text-xs border border-neutral-300 rounded py-2 hover:bg-neutral-50"
               >

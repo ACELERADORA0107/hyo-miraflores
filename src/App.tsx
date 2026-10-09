@@ -36,7 +36,7 @@ export default function App() {
   }, [restaurarSesionDesdeUid]);
 
   return (
-    <BrowserRouter>
+    <BrowserRouter basename="/hyo-miraflores">
       <Routes>
         <Route path="/" element={<Login />} />
         <Route path="/cliente" element={<PerfilCliente />} />
